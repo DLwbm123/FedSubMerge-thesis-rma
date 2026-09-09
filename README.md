@@ -84,3 +84,6 @@ the queue states are complete. After completion, validate the results and
 publish shareable code, configurations and metric summaries under the user's
 GitHub delivery policy; exclude model files, raw images, credentials and
 runtime caches. Starting the queues is not experiment completion.
+# Resource and subspace batch
+
+See [RESOURCE_EXPERIMENTS.md](RESOURCE_EXPERIMENTS.md) for the eight-sequence MPE/DRR experiment, exact method settings, resource accounting and shared-GPU timing limitations. This batch is separate from the completed independent references below.
