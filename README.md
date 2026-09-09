@@ -86,6 +86,8 @@ GitHub delivery policy; exclude model files, raw images, credentials and
 runtime caches. Starting the queues is not experiment completion.
 # Resource and subspace batch
 
+The additional six-run FOT/Fed-DER/TARGET batch is documented in [PUBLIC_BASELINES.md](PUBLIC_BASELINES.md), including pinned upstream sources and explicit resource-protocol adaptations. It is separate from the completed eight-run batch below.
+
 All eight runs are complete. See [completed metrics and pairing checks](RESOURCE_COMPLETION_REPORT.md) and [summary CSV](results/resources_summary.csv). RMA references are paired for this controlled batch; historical thesis-table rows are not automatically covered.
 
 See [RESOURCE_EXPERIMENTS.md](RESOURCE_EXPERIMENTS.md) for the eight-sequence MPE/DRR experiment, exact method settings, resource accounting and shared-GPU timing limitations. This batch is separate from the completed independent references below.
