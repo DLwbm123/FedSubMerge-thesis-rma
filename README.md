@@ -1,5 +1,7 @@
 # FedSubMerge thesis: independent-task RMA references
 
+**Completed:** all 12 runs finished on 2026-09-08. See [completion report](COMPLETION_REPORT.md) and [reference table](results/independent_references.csv).
+
 Authorized scope: PathMNIST alpha=0.3 tasks 2–4 and Hyper-Kvasir alpha=0.3
 tasks 2–10, one seed (2025), with cloud SwanLab logging. These are 12
 independent single-task FedAvg runs, not continual-learning sequences.

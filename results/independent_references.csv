@@ -1,0 +1,13 @@
+dataset,task,alpha,seed,rounds,train_count,validation_count,test_count,test_accuracy_percent,validation_accuracy_percent,elapsed_seconds,peak_allocated_mib,peak_reserved_mib,checkpoint_bytes,swanlab_url
+pathmnist,2,0.3,2025,20,16609,2308,973,98.86947584789311,99.95667244367418,3159.3014510261128,4788.984375,8306.0,89540338,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/c13lxzbtu67kphpw80t43
+pathmnist,3,0.3,2025,20,16150,2244,1627,100.0,100.0,2147.377042039996,4788.984375,8298.0,89540338,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/c7vjwukbyqseqo6xd6jbe
+pathmnist,4,0.3,2025,20,24138,3354,2395,88.39248434237996,97.40608228980322,3086.075722065987,4788.984375,8296.0,89540338,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/no3e0vv9oi3c6kn6lew4d
+hyperkvasir,2,0.3,2025,20,1128,201,402,98.2587064676617,97.01492537313433,823.8414014689624,18840.02734375,31686.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/j5a7g89o61y1f7yxuspld
+hyperkvasir,3,0.3,2025,20,1116,199,398,96.98492462311557,96.48241206030151,1115.2564618450124,18841.02734375,33148.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/ym72avnw2qtd1whw9gskn
+hyperkvasir,4,0.3,2025,20,950,169,339,99.41002949852508,98.81656804733728,953.7527607720112,18841.02734375,33240.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/s1417f3usw3i0oupzx9lg
+hyperkvasir,5,0.3,2025,20,612,109,218,89.44954128440367,93.57798165137615,647.0420361990109,18840.02734375,32124.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/7wcp26ltonyknfvq6xjh7
+hyperkvasir,6,0.3,2025,20,444,79,159,100.0,96.20253164556962,331.54886297299527,18841.02734375,32636.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/i0o572c1ikszquogzcnw8
+hyperkvasir,7,0.3,2025,20,260,46,92,100.0,100.0,201.51746640901547,18841.02734375,39822.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/h3gcvxlzjq3b1wg3avq2s
+hyperkvasir,8,0.3,2025,20,151,26,53,96.22641509433963,84.61538461538461,130.9582852900494,10643.02734375,28384.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/qo6zducbcr5d8x08qbx6m
+hyperkvasir,9,0.3,2025,20,55,9,19,52.63157894736842,33.333333333333336,72.79008818091825,3617.02734375,8380.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/7yycvzipl0z03f27gnguq
+hyperkvasir,10,0.3,2025,20,37,7,13,46.15384615384615,42.857142857142854,123.31853571499232,2154.90234375,5852.0,89585522,https://swanlab.cn/@wangbomin/FedSubMerge-Thesis-RMA/runs/wuy39bvi4s2j9fcpc4m5v
