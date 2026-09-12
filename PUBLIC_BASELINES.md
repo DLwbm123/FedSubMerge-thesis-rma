@@ -1,5 +1,7 @@
 # Public-source baseline resource measurements
 
+Completion verified on 2026-09-12: all six sequences finished. See PUBLIC_COMPLETION_REPORT.md and results/public_resources_summary.csv.
+
 Approved scope: FOT, Fed-DER and TARGET on PathMNIST and Hyper-Kvasir20, alpha=0.3, seed=2025: six complete sequences. No multi-seed extension. Preserve thesis accuracy tables; supplementary measured accuracies are diagnostics of these adapters, not replacements or fabricated matches to historical rows.
 
 ## Sources

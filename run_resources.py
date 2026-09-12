@@ -1,4 +1,4 @@
-"""Eight controlled resource/mechanism sequences, sharing the NC data protocol."""
+"""Controlled resource/mechanism sequences, sharing the NC data protocol."""
 import argparse
 import json
 import os
@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from run_independent import TASKS, aggregate, atomic_json, evaluate, load_data, round_lr
+from run_independent import TASKS, aggregate, atomic_json, evaluate, load_data, round_lr, task_counts
 from resource_metrics import benchmark_resources, project_gradient, tensor_bytes
 
 
@@ -28,6 +28,7 @@ def stamp():
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--dataset', choices=TASKS, required=True)
+    p.add_argument('--scenario', choices=['distribution', 'quantity'], default='distribution')
     p.add_argument('--method', choices=['FedAvg', 'Fed-GPM', 'FedSubMerge', 'FedSubMerge-AD'], required=True)
     for key in ['source-root', 'data-root', 'client-index', 'output']:
         p.add_argument('--' + key, type=Path, required=True)
@@ -39,6 +40,7 @@ def main():
     p.add_argument('--workers', type=int, default=0)
     p.add_argument('--smoke', action='store_true', help='Two tasks, one batch/client; never a formal result')
     a = p.parse_args()
+    counts_per_task = task_counts(a.dataset, a.scenario)
     sys.path.insert(0, str(a.source_root))
     from backbone.ResNet18 import resnet18
     from models.gpm import get_representation_matrix_ResNet18, update_GPM as update_activation
@@ -56,16 +58,17 @@ def main():
     np.random.seed(a.seed)
     torch.manual_seed(a.seed)
     torch.cuda.manual_seed_all(a.seed)
-    net = resnet18(nclasses=sum(TASKS[a.dataset]), in_ch=3).cuda()
+    net = resnet18(nclasses=sum(counts_per_task), in_ch=3).cuda()
     conv = [(n, v) for n, v in net.named_parameters() if v.ndim == 4]
     global_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
     model_bytes = tensor_bytes(global_state)
     spaces, singulars = {c: [] for c in range(10)}, {c: [] for c in range(10)}
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(a).items()}
-    config.update(alpha=.3, clients=10, participation=1., pgs_samples_per_client=256,
+    config.update(alpha=.3 if a.scenario == 'distribution' else None,
+                  task_sizes=counts_per_task, clients=10, participation=1., pgs_samples_per_client=256,
                   pgs_batch_size=64, pgs_local_threshold=.99, pgs_merge_threshold=.97,
                   gpm_examples=8, gpm_threshold='0.92 + 0.002 * completed_tasks',
-                  ad_peers=4 if a.dataset == 'pathmnist' else 5,
+                  ad_peers=6 if a.scenario == 'quantity' else 4 if a.dataset == 'pathmnist' else 5,
                   DRR_unit='unique training source images used to construct retained representations',
                   MPE_scope='network parameters only; excludes auxiliary bases',
                   task_evaluation='known-task masked global labels',
@@ -77,18 +80,18 @@ def main():
     atomic_json(a.output / 'config.json', config)
     import swanlab
     run = swanlab.init(project='FedSubMerge-Thesis-Resources',
-                       experiment_name=f'{a.method}-{a.dataset}-a0.3-s{a.seed}' + ('-SMOKE' if a.smoke else ''),
+                       experiment_name=f'{a.method}-{a.dataset}-{a.scenario}-s{a.seed}' + ('-SMOKE' if a.smoke else ''),
                        config=config, mode='disabled' if a.smoke else 'cloud', logdir=str(a.output / 'swanlab'))
     atomic_json(a.output / 'swanlab_run.json', {k: str(getattr(run, k)) for k in ('id', 'url') if hasattr(run, k)})
     def record(kind, data):
         with (a.output / (kind + '.jsonl')).open('a') as f:
             f.write(json.dumps(data) + '\n')
     parameters, used_counts, train_counts, matrix, tests = [], [], [], [], []
-    total_tasks = 2 if a.smoke else len(TASKS[a.dataset])
+    total_tasks = 2 if a.smoke else len(counts_per_task)
     step = 0
     try:
         for t in range(total_tasks):
-            lo, hi = sum(TASKS[a.dataset][:t]), sum(TASKS[a.dataset][:t+1])
+            lo, hi = sum(counts_per_task[:t]), sum(counts_per_task[:t+1])
             loaders, val, test, audit = load_data(a, lo, hi)
             if a.smoke:
                 loaders = {c: DataLoader(Subset(loader.dataset, range(min(8, len(loader.dataset)))), batch_size=8)

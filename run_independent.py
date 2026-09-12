@@ -17,8 +17,18 @@ from torchvision import transforms
 TASKS = {"pathmnist": [2, 2, 2, 3], "hyperkvasir": [2] * 10}
 
 
-def task_bounds(dataset, task):
-    counts = TASKS[dataset]
+def task_counts(dataset, scenario="distribution"):
+    if scenario == "quantity":
+        if dataset != "hyperkvasir":
+            raise ValueError("Only the existing Hyper-Kvasir quantity partition is supported")
+        return [4] * 5
+    if scenario != "distribution":
+        raise ValueError("Unknown scenario")
+    return TASKS[dataset]
+
+
+def task_bounds(dataset, task, scenario="distribution"):
+    counts = task_counts(dataset, scenario)
     if not 2 <= task <= len(counts):
         raise ValueError(f"Expected a one-based task in 2..{len(counts)}")
     return sum(counts[:task - 1]), sum(counts[:task])
@@ -115,7 +125,7 @@ def load_data(args, lo, hi):
                  validation_count=len(val_loader.dataset), test_count=len(test_loader.dataset),
                  source_image_shape=list(train.data.shape[1:]),
                  input_size=128 if args.dataset == "pathmnist" else 256,
-                 output_classes=sum(TASKS[args.dataset]), task_class_ids=list(range(lo, hi)),
+                 output_classes=sum(task_counts(args.dataset, getattr(args, 'scenario', 'distribution'))), task_class_ids=list(range(lo, hi)),
                  source_train_count=len(train), train_indices=selected_indices)
     return loaders, val_loader, test_loader, audit
 
@@ -123,6 +133,7 @@ def load_data(args, lo, hi):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=TASKS, required=True)
+    parser.add_argument("--scenario", choices=["distribution", "quantity"], default="distribution")
     parser.add_argument("--task", type=int, required=True, help="One-based original task ID")
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, required=True)
@@ -138,7 +149,7 @@ def main():
     parser.add_argument("--project", default="FedSubMerge-Thesis-RMA")
     parser.add_argument("--check-data", action="store_true")
     args = parser.parse_args()
-    lo, hi = task_bounds(args.dataset, args.task)
+    lo, hi = task_bounds(args.dataset, args.task, args.scenario)
     if min(args.rounds, args.local_epochs, args.batch_size) <= 0 or args.lr <= 0:
         raise ValueError("Invalid training budget")
     sys.path.insert(0, str(args.source_root.resolve()))
@@ -166,12 +177,13 @@ def main():
     torch.backends.cudnn.allow_tf32 = True
     torch.set_float32_matmul_precision("high")
     device = torch.device("cuda:0")
-    model = resnet18(nclasses=sum(TASKS[args.dataset]), in_ch=3).to(device)
+    model = resnet18(nclasses=sum(task_counts(args.dataset, args.scenario)), in_ch=3).to(device)
     global_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
     config = {key: str(value) if isinstance(value, Path) else value
               for key, value in vars(args).items()}
     config.update({key: value for key, value in audit.items() if key != "train_indices"})
-    config.update(alpha=0.3, num_clients=10, clients_fraction=1.0,
+    config.update(alpha=0.3 if args.scenario == "distribution" else None,
+                  task_sizes=task_counts(args.dataset, args.scenario), num_clients=10, clients_fraction=1.0,
                   initialization="fresh_random_per_task", optimizer="SGD, momentum=0, weight_decay=0",
                   training_loss="cross_entropy over original full output", evaluation="known-task class mask",
                   lr_milestones_rounds=[args.rounds * 0.5, args.rounds * 0.75],
@@ -185,7 +197,7 @@ def main():
     atomic_json(args.output / "train_indices.json", audit["train_indices"])
     import swanlab
     run = swanlab.init(project=args.project,
-                       experiment_name=f"NC-{args.dataset}-alpha0.3-task{args.task:02d}-seed{args.seed}",
+                       experiment_name=f"NC-{args.dataset}-{args.scenario}-task{args.task:02d}-seed{args.seed}",
                        config=config, mode="cloud", logdir=str(args.output / "swanlab"))
     run_info = {key: str(getattr(run, key)) for key in ("id", "url") if hasattr(run, key)}
     atomic_json(args.output / "swanlab_run.json", run_info)
