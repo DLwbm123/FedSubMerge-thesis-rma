@@ -12,4 +12,4 @@ Remote root: `/remote-home/wangbomin/FedSubMerge_thesis/runs/quantity_20260912`.
 
 The finite queue executes `python -u entry.py` with its working directory set to the code snapshot. Worker selection and configuration are passed through environment variables, so neither the parent nor worker command line contains project names, method names or storage paths. One job at a time on GPU 3, admission requires 37,000 MiB free. No other process is stopped. A failure stops the queue without automatic retries; existing output directories are never overwritten. SwanLab records formal runs. The tmux session is `q0912`; it continues independently of SSH or the chat.
 
-This is an unfinished batch. Completion and RMA require all eight final results and paired source-index/budget checks; no interim result is filled into the quantity-skew table.
+Completed and verified on 2026-09-13. All eight final results and the paired RMA checks passed. See QUANTITY_COMPLETION_REPORT.md and results/quantity_resources_summary.csv.
