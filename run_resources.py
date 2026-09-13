@@ -28,7 +28,10 @@ def stamp():
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--dataset', choices=TASKS, required=True)
-    p.add_argument('--scenario', choices=['distribution', 'quantity'], default='distribution')
+    p.add_argument('--scenario', choices=['distribution', 'quantity', 'feature'], default='distribution')
+    p.add_argument('--validation-index', type=Path)
+    p.add_argument('--alpha', type=float, choices=[0.1, 0.3], default=0.3)
+    p.add_argument('--memory-fraction', type=float)
     p.add_argument('--method', choices=['FedAvg', 'Fed-GPM', 'FedSubMerge', 'FedSubMerge-AD'], required=True)
     for key in ['source-root', 'data-root', 'client-index', 'output']:
         p.add_argument('--' + key, type=Path, required=True)
@@ -53,7 +56,10 @@ def main():
     torch.backends.cudnn.benchmark = False
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    torch.cuda.set_per_process_memory_fraction(.44 if a.dataset == 'pathmnist' else .90)
+    fraction = a.memory_fraction if a.memory_fraction is not None else .44 if a.dataset == 'pathmnist' else .90
+    if not 0 < fraction <= .9:
+        raise ValueError('Invalid CUDA allocator fraction')
+    torch.cuda.set_per_process_memory_fraction(fraction)
     random.seed(a.seed)
     np.random.seed(a.seed)
     torch.manual_seed(a.seed)
@@ -62,13 +68,14 @@ def main():
     conv = [(n, v) for n, v in net.named_parameters() if v.ndim == 4]
     global_state = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
     model_bytes = tensor_bytes(global_state)
-    spaces, singulars = {c: [] for c in range(10)}, {c: [] for c in range(10)}
+    nclients = 4 if a.dataset == 'skin' else 10
+    spaces, singulars = {c: [] for c in range(nclients)}, {c: [] for c in range(nclients)}
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(a).items()}
-    config.update(alpha=.3 if a.scenario == 'distribution' else None,
-                  task_sizes=counts_per_task, clients=10, participation=1., pgs_samples_per_client=256,
+    config.update(alpha=a.alpha if a.scenario == 'distribution' else None,
+                  task_sizes=counts_per_task, clients=nclients, participation=1., pgs_samples_per_client=256,
                   pgs_batch_size=64, pgs_local_threshold=.99, pgs_merge_threshold=.97,
                   gpm_examples=8, gpm_threshold='0.92 + 0.002 * completed_tasks',
-                  ad_peers=6 if a.scenario == 'quantity' else 4 if a.dataset == 'pathmnist' else 5,
+                  ad_peers=2 if a.dataset == 'skin' else 6 if a.scenario == 'quantity' else 4 if a.dataset == 'pathmnist' else 5,
                   DRR_unit='unique training source images used to construct retained representations',
                   MPE_scope='network parameters only; excludes auxiliary bases',
                   task_evaluation='known-task masked global labels',
@@ -80,7 +87,7 @@ def main():
     atomic_json(a.output / 'config.json', config)
     import swanlab
     run = swanlab.init(project='FedSubMerge-Thesis-Resources',
-                       experiment_name=f'{a.method}-{a.dataset}-{a.scenario}-s{a.seed}' + ('-SMOKE' if a.smoke else ''),
+                       experiment_name=f'{a.method}-{a.dataset}-{a.scenario}-a{config["alpha"]}-s{a.seed}' + ('-SMOKE' if a.smoke else ''),
                        config=config, mode='disabled' if a.smoke else 'cloud', logdir=str(a.output / 'swanlab'))
     atomic_json(a.output / 'swanlab_run.json', {k: str(getattr(run, k)) for k in ('id', 'url') if hasattr(run, k)})
     def record(kind, data):
@@ -95,7 +102,7 @@ def main():
             loaders, val, test, audit = load_data(a, lo, hi)
             if a.smoke:
                 loaders = {c: DataLoader(Subset(loader.dataset, range(min(8, len(loader.dataset)))), batch_size=8)
-                           for c, loader in list(loaders.items())[:2]}
+                           for c, loader in list(loaders.items())[:nclients if a.dataset == 'skin' else 2]}
                 audit['client_train_counts'] = {c: len(l.dataset) for c, l in loaders.items()}
             tests.append((test, lo, hi))
             atomic_json(a.output / f'task{t+1:02d}_data.json', audit)
@@ -210,7 +217,7 @@ def main():
                     layer_singulars = [[singulars[c][k] for c in clients] for k in range(len(conv))]
                     if a.method == 'FedSubMerge':
                         u, s = merging_fed_subspaces_all(layer_spaces, layer_singulars, .97)
-                        for c in range(10):
+                        for c in range(nclients):
                             spaces[c], singulars[c] = cpu(u), cpu(s)
                     else:
                         u, s = merging_adaptive_fed_subspaces_all(layer_spaces, layer_singulars,
@@ -223,7 +230,7 @@ def main():
                 train_counts.append(sum(audit['client_train_counts'].values()))
             else:
                 construction_end = stamp()
-            for c in range(10):
+            for c in range(nclients):
                 for (name, _), basis in zip(conv, spaces[c]):
                     record('subspaces', dict(task=t+1, client=c, layer=name, rank=basis.shape[1],
                                             dimension=basis.shape[0], bytes=tensor_bytes(basis)))

@@ -28,33 +28,52 @@ def main():
         p.write_text(json.dumps(state, indent=2))
         p.replace(root / 'queue.json')
 
-    save()
-    for index, job in enumerate(config['jobs']):
+    for job in config['jobs']:
         output = Path(job['output'])
         if output.exists():
             raise FileExistsError(f'Refusing to rerun or overwrite {output}')
-        while True:
+    pending, active, failed = list(range(len(config['jobs']))), {}, False
+    save()
+    while pending or active:
+        for index, (process, log) in list(active.items()):
+            rc = process.poll()
+            if rc is None:
+                continue
+            log.close()
+            result_path = Path(config['jobs'][index]['output']) / 'result.json'
+            complete = (rc == 0 and result_path.exists() and
+                        json.loads(result_path.read_text()).get('status') == 'complete')
+            state['jobs'][index].update(status='complete' if complete else 'failed', exit_code=rc)
+            failed |= not complete
+            del active[index]
+        if failed and not config.get('continue_after_failure', False):
+            for index in pending:
+                state['jobs'][index]['status'] = 'blocked_by_failure'
+            pending.clear()
+        elif pending:
             free = int(subprocess.check_output(['nvidia-smi', '-i', '3', '--query-gpu=memory.free',
                                                '--format=csv,noheader,nounits'], text=True).strip())
-            if free >= 37000:
-                break
-            state['jobs'][index]['status'] = 'waiting_for_memory'
-            save()
-            time.sleep(30)
-        env = dict(os.environ, JOB_SLOT=str(index), CUDA_VISIBLE_DEVICES='3')
-        with (root / 'logs' / f'{index:02d}.log').open('x') as log:
-            process = subprocess.Popen([sys.executable, '-u', 'entry.py'], cwd=root / 'code',
-                                       env=env, stdout=log, stderr=subprocess.STDOUT)
-            state['jobs'][index].update(status='running', pid=process.pid)
-            save()
-            rc = process.wait()
-        result_path = output / 'result.json'
-        complete = (rc == 0 and result_path.exists() and
-                    json.loads(result_path.read_text()).get('status') == 'complete')
-        state['jobs'][index].update(status='complete' if complete else 'failed', exit_code=rc)
+            reserved = sum(config['jobs'][i].get('memory_mib', 37000) for i in active)
+            for index in list(pending):
+                job = config['jobs'][index]
+                required = job.get('memory_mib', 37000)
+                if (len(active) >= config.get('max_concurrent', 1) or free < required or
+                        reserved + required > config.get('capacity_mib', 38000)):
+                    continue
+                env = dict(os.environ, JOB_SLOT=str(index), CUDA_VISIBLE_DEVICES='3')
+                log = (root / 'logs' / f'{index:02d}.log').open('x')
+                process = subprocess.Popen([sys.executable, '-u', 'entry.py'], cwd=root / 'code',
+                                           env=env, stdout=log, stderr=subprocess.STDOUT)
+                active[index] = (process, log)
+                state['jobs'][index].update(status='running', pid=process.pid)
+                pending.remove(index)
+                reserved += required
+                free -= required
         save()
-        if not complete:
-            raise SystemExit('Queue stopped; see the failed job log')
+        if pending or active:
+            time.sleep(10)
+    if failed:
+        raise SystemExit('Queue stopped; see the failed job log')
 
 
 if __name__ == '__main__':

@@ -9,6 +9,8 @@ def main():
     assert task_bounds("pathmnist", 2) == (2, 4)
     assert task_bounds("pathmnist", 4) == (6, 9)
     assert task_bounds("hyperkvasir", 10) == (18, 20)
+    assert task_bounds("skin", 2, "feature") == (2, 4)
+    assert task_bounds("skin", 3, "feature") == (4, 6)
     assert task_bounds("hyperkvasir", 2, "quantity") == (4, 8)
     assert task_bounds("hyperkvasir", 5, "quantity") == (16, 20)
     assert task_bounds("hyperkvasir", 10) == (18, 20)

@@ -10,14 +10,19 @@ import time
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, Dataset
 from torchvision import transforms
+from PIL import Image
 
 
-TASKS = {"pathmnist": [2, 2, 2, 3], "hyperkvasir": [2] * 10}
+TASKS = {"pathmnist": [2, 2, 2, 3], "hyperkvasir": [2] * 10, "skin": [2, 2, 2]}
 
 
 def task_counts(dataset, scenario="distribution"):
+    if dataset == "skin":
+        if scenario != "feature":
+            raise ValueError("Skin requires the four-source feature scenario")
+        return TASKS[dataset]
     if scenario == "quantity":
         if dataset != "hyperkvasir":
             raise ValueError("Only the existing Hyper-Kvasir quantity partition is supported")
@@ -81,46 +86,71 @@ def evaluate(model, loader, device, lo, hi):
     return 100.0 * correct / total
 
 
+class SkinCache(Dataset):
+    def __init__(self, root, split, transform, **kwargs):
+        self.data = np.load(Path(root) / f'{split}_data_128_new.npy', mmap_mode='r')
+        self.targets = np.load(Path(root) / f'{split}_label_128_new.npy', mmap_mode='r')
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.targets)
+
+    def __getitem__(self, index):
+        image = Image.fromarray(self.data[index])
+        return self.transform(image), int(self.targets[index]), transforms.functional.to_tensor(image)
+
+
 def load_data(args, lo, hi):
     # Reuse the project's existing memory-mapped datasets without copying images.
     from datasets.seq_medmnist_fedcl_path_effi import PathMNIST
     from datasets.hyperkvasir20_common import HyperKvasir20
 
-    resize = [transforms.Resize((256, 256))] if args.dataset == "hyperkvasir" else []
+    resize = [transforms.Resize((256, 256))] if args.dataset in ("hyperkvasir", "skin") else []
     augmentation = ([transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(),
                      transforms.ColorJitter(brightness=32.0 / 255.0, saturation=0.5)]
-                    if args.dataset == "hyperkvasir" else [])
+                    if args.dataset in ("hyperkvasir", "skin") else [])
     train_transform = transforms.Compose(resize + augmentation + [transforms.ToTensor()])
     eval_transform = transforms.Compose(resize + [transforms.ToTensor()])
-    dataset_class = PathMNIST if args.dataset == "pathmnist" else HyperKvasir20
+    dataset_class = SkinCache if args.dataset == 'skin' else PathMNIST if args.dataset == "pathmnist" else HyperKvasir20
     kwargs = dict(root=str(args.data_root), mmap_mode="r")
     train = dataset_class(split="train", transform=train_transform, **kwargs)
-    val = dataset_class(split="val", transform=eval_transform, **kwargs)
+    val = dataset_class(split="train" if args.dataset == 'skin' else "val", transform=eval_transform, **kwargs)
     test = dataset_class(split="test", transform=eval_transform, **kwargs)
     labels = np.asarray(train.targets).reshape(-1)
     # These trusted local .npy maps are existing experiment artifacts.
     clients = np.load(args.client_index, allow_pickle=True).item()
-    if set(clients) != set(range(10)):
-        raise ValueError("Expected the existing ten-client partition")
-    all_indices = np.concatenate([np.asarray(clients[c]) for c in range(10)])
+    nclients = 4 if args.dataset == 'skin' else 10
+    if set(clients) != set(range(nclients)):
+        raise ValueError("Unexpected client partition")
+    all_indices = np.concatenate([np.asarray(clients[c]) for c in range(nclients)])
     if len(np.unique(all_indices)) != len(all_indices):
         raise ValueError("Overlapping training client indices")
     loaders, counts, selected_indices = {}, {}, {}
-    for client in range(10):
+    validation_ids = None
+    if args.dataset == 'skin':
+        if args.validation_index is None:
+            raise ValueError('Skin requires the existing disjoint validation indices')
+        heldout = np.load(args.validation_index, allow_pickle=True).item()
+        assert set(heldout) == set(clients)
+        validation_ids = np.concatenate([np.asarray(heldout[c]) for c in range(nclients)])
+        assert len(np.unique(validation_ids)) == len(validation_ids)
+        assert not np.intersect1d(all_indices, validation_ids).size
+        assert np.array_equal(np.sort(np.concatenate([all_indices, validation_ids])), np.arange(len(train)))
+    for client in range(nclients):
         ids = task_indices(labels, clients[client], lo, hi)
         counts[client] = len(ids)
         selected_indices[str(client)] = ids.tolist()
         if len(ids):
             loaders[client] = DataLoader(Subset(train, ids), args.batch_size, shuffle=True,
                                          num_workers=args.workers, pin_memory=True)
-    def eval_loader(data):
+    def eval_loader(data, selected=None):
         y = np.asarray(data.targets).reshape(-1)
-        ids = np.flatnonzero((y >= lo) & (y < hi))
+        ids = np.flatnonzero((y >= lo) & (y < hi)) if selected is None else task_indices(y, selected, lo, hi)
         return DataLoader(Subset(data, ids), args.batch_size, num_workers=args.workers,
                           pin_memory=True)
     if not loaders:
         raise ValueError("No current-task training samples")
-    val_loader, test_loader = eval_loader(val), eval_loader(test)
+    val_loader, test_loader = eval_loader(val, validation_ids), eval_loader(test)
     audit = dict(client_train_counts=counts, train_count=sum(counts.values()),
                  validation_count=len(val_loader.dataset), test_count=len(test_loader.dataset),
                  source_image_shape=list(train.data.shape[1:]),
@@ -133,11 +163,14 @@ def load_data(args, lo, hi):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", choices=TASKS, required=True)
-    parser.add_argument("--scenario", choices=["distribution", "quantity"], default="distribution")
+    parser.add_argument("--scenario", choices=["distribution", "quantity", "feature"], default="distribution")
+    parser.add_argument("--alpha", type=float, choices=[0.1, 0.3], default=0.3)
+    parser.add_argument("--memory-fraction", type=float, default=0.9)
     parser.add_argument("--task", type=int, required=True, help="One-based original task ID")
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--client-index", type=Path, required=True)
+    parser.add_argument("--validation-index", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=2025)
     parser.add_argument("--rounds", type=int, default=20)
@@ -169,6 +202,9 @@ def main():
         return
     if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
         raise RuntimeError("Expose exactly one of physical GPU 2 or 3")
+    if not 0 < args.memory_fraction <= 0.9:
+        raise ValueError("Invalid CUDA allocator fraction")
+    torch.cuda.set_per_process_memory_fraction(args.memory_fraction)
     args.output.mkdir(parents=True, exist_ok=False)
     torch.cuda.manual_seed_all(args.seed)
     # Keep cuDNN search disabled: the measured workspace fits alongside existing jobs.
@@ -182,8 +218,8 @@ def main():
     config = {key: str(value) if isinstance(value, Path) else value
               for key, value in vars(args).items()}
     config.update({key: value for key, value in audit.items() if key != "train_indices"})
-    config.update(alpha=0.3 if args.scenario == "distribution" else None,
-                  task_sizes=task_counts(args.dataset, args.scenario), num_clients=10, clients_fraction=1.0,
+    config.update(alpha=args.alpha if args.scenario == "distribution" else None,
+                  task_sizes=task_counts(args.dataset, args.scenario), num_clients=len(audit['client_train_counts']), clients_fraction=1.0,
                   initialization="fresh_random_per_task", optimizer="SGD, momentum=0, weight_decay=0",
                   training_loss="cross_entropy over original full output", evaluation="known-task class mask",
                   lr_milestones_rounds=[args.rounds * 0.5, args.rounds * 0.75],
@@ -197,7 +233,7 @@ def main():
     atomic_json(args.output / "train_indices.json", audit["train_indices"])
     import swanlab
     run = swanlab.init(project=args.project,
-                       experiment_name=f"NC-{args.dataset}-{args.scenario}-task{args.task:02d}-seed{args.seed}",
+                       experiment_name=f"NC-{args.dataset}-{args.scenario}-a{config['alpha']}-task{args.task:02d}-seed{args.seed}",
                        config=config, mode="cloud", logdir=str(args.output / "swanlab"))
     run_info = {key: str(getattr(run, key)) for key in ("id", "url") if hasattr(run, key)}
     atomic_json(args.output / "swanlab_run.json", run_info)
