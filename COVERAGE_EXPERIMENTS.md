@@ -13,3 +13,5 @@ The GPU3-only finite queue admits at most three 128-input jobs simultaneously, w
 Parent and child OS command lines use `python -u entry.py`; dataset/method/storage arguments are supplied internally from a private JSON configuration and environment variables. All data, logs, checkpoints, cache and temporary files remain on the verified remote-home NFS filesystem. Images are memory-mapped in place. Allow 40 GiB for outputs, logs and temporary checkpoint copies; storage preparation found over 350 TiB free.
 
 Remote root: `/remote-home/wangbomin/FedSubMerge_thesis/runs/coverage_20260913`. Private configuration: `jobs.json`; state: `queue.json`; logs: `logs/00.log` through `logs/25.log`. Dedicated tmux server/session: `q0913`. Formal runs use SwanLab. Startup checks establish launch only; final matrices and paired reference checks are required before filling table cells. No ongoing chat monitoring is scheduled.
+
+Completion verified on 2026-09-15: all 26 jobs succeeded. See COVERAGE_COMPLETION_REPORT.md and results/coverage_resources_summary.csv.

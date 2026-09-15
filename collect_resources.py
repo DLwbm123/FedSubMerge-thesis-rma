@@ -16,22 +16,28 @@ def rows(path):
 
 def collect(batch, references):
     queue = read(batch / 'queue.json')
-    quantity = 'jobs' in queue
+    coverage = 'jobs' in queue and any(j['name'].startswith('pathmnist_') for j in queue['jobs'])
+    quantity = 'jobs' in queue and not coverage
     references_summary = []
-    if quantity:
-        assert len(queue['jobs']) == 8
+    if quantity or coverage:
+        assert len(queue['jobs']) == (26 if coverage else 8)
         assert all(j['status'] == 'complete' and j['exit_code'] == 0 for j in queue['jobs'])
         methods = ['FedAvg', 'Fed-GPM', 'FedSubMerge', 'FedSubMerge-AD']
-        assert {j['name'] for j in queue['jobs']} == set(methods + [f'NC-task{t}' for t in range(2, 6)])
-        jobs = [dict(dataset='hyperkvasir', method=m) for m in methods]
-        for t in range(2, 6):
-            nc = references / f'nc_task{t:02d}'
-            metrics, result = rows(nc / 'metrics.jsonl'), read(nc / 'result.json')
-            assert [r['round'] for r in metrics] == list(range(1, 21))
-            assert result['status'] == 'complete' and not (nc / 'failure.json').exists()
-            assert (nc / 'checkpoint.pt').stat().st_size > 0
-            references_summary.append(dict(task=t, result={k:v for k,v in result.items() if k != 'checkpoint'},
-                                           rounds=metrics))
+        settings = [('pathmnist', 4), ('hyperkvasir', 10), ('skin', 3)] if coverage else [('hyperkvasir', 5)]
+        expected, jobs = set(), []
+        for dataset, tasks in settings:
+            expected.update(f'{dataset}_{m}' if coverage else m for m in methods)
+            expected.update(f'{dataset}_nc_task{t:02d}' if coverage else f'NC-task{t}' for t in range(2,tasks+1))
+            jobs.extend(dict(dataset=dataset, method=m) for m in methods)
+            for t in range(2, tasks+1):
+                nc = references / (f'{dataset}_nc_task{t:02d}' if coverage else f'nc_task{t:02d}')
+                metrics, result = rows(nc / 'metrics.jsonl'), read(nc / 'result.json')
+                assert [r['round'] for r in metrics] == list(range(1, 21))
+                assert result['status'] == 'complete' and not (nc / 'failure.json').exists()
+                assert (nc / 'checkpoint.pt').stat().st_size > 0
+                references_summary.append(dict(dataset=dataset, task=t, result={k:v for k,v in result.items() if k != 'checkpoint'},
+                                               rounds=metrics))
+        assert {j['name'] for j in queue['jobs']} == expected
     else:
         assert not queue['active'] and not queue['pending']
         assert len(queue['finished']) == 8 and all(j['exit_code'] == 0 for j in queue['finished'])
@@ -42,7 +48,7 @@ def collect(batch, references):
         root = batch / (method if quantity else f'{dataset}_{method}')
         config, result = read(root / 'config.json'), read(root / 'result.json')
         rounds, stages = rows(root / 'rounds.jsonl'), rows(root / 'stages.jsonl')
-        tasks = 5 if quantity else 4 if dataset == 'pathmnist' else 10
+        tasks = 5 if quantity else 3 if dataset == 'skin' else 4 if dataset == 'pathmnist' else 10
         assert result['status'] == 'complete' and not (root / 'failure.json').exists()
         assert [(x['task'], x['round']) for x in rounds] == [(t, r) for t in range(1, tasks+1) for r in range(1, 21)]
         assert [x['task'] for x in stages] == list(range(1, tasks+1))
@@ -51,7 +57,7 @@ def collect(batch, references):
         assert all(math.isfinite(x) for row in result['accuracy_matrix'] for x in row)
         ratios = []
         for t in range(2, tasks+1):
-            nc = references / (f'nc_task{t:02d}' if quantity else f'{dataset}_task{t:02d}_seed2025')
+            nc = references / (f'{dataset}_nc_task{t:02d}' if coverage else f'nc_task{t:02d}' if quantity else f'{dataset}_task{t:02d}_seed2025')
             nc_config = read(nc / 'config.json')
             data = read(root / f'task{t:02d}_data.json')
             for key in ('seed', 'rounds', 'local_epochs', 'batch_size', 'lr', 'data_root'):
@@ -60,6 +66,11 @@ def collect(batch, references):
                 assert config['scenario'] == nc_config['scenario'] == 'quantity'
                 assert config['task_sizes'] == nc_config['task_sizes'] == [4] * 5
                 assert config['alpha'] is nc_config['alpha'] is None
+            if coverage:
+                for key in ('scenario', 'alpha', 'task_sizes', 'validation_index'):
+                    assert config[key] == nc_config[key], (dataset, key)
+                assert config['alpha'] == (None if dataset == 'skin' else 0.1)
+                assert config['scenario'] == ('feature' if dataset == 'skin' else 'distribution')
             for key in ('client_train_counts', 'train_count', 'validation_count', 'test_count',
                         'source_image_shape', 'input_size', 'output_classes', 'task_class_ids', 'source_train_count'):
                 assert data[key] == nc_config[key], (dataset, t, key)
@@ -78,6 +89,7 @@ def collect(batch, references):
                               for t in range(1, tasks))
         assert math.isclose(mpe, result['MPE'], abs_tol=1e-12)
         matrix = result['accuracy_matrix']
+        assert math.isclose(statistics.mean(matrix[-1]), result['final_ACC'], abs_tol=1e-12)
         bwtr = statistics.mean((matrix[-1][t]-matrix[t][t])/matrix[t][t] for t in range(tasks-1))
         assert math.isclose(bwtr, result['BWTR'], abs_tol=1e-12)
         summary = dict(dataset=dataset, method=method, seed=config['seed'], ACC=result['final_ACC'],
@@ -89,7 +101,7 @@ def collect(batch, references):
                        construction_seconds=sum(x['construction_seconds'] for x in stages),
                        subspace_merge_seconds=sum(x['subspace_merge_seconds'] for x in stages))
         assert all(math.isfinite(v) for v in summary.values() if isinstance(v, (int, float)))
-        clean_config = {k: v for k, v in config.items() if k not in ('source_root', 'data_root', 'client_index', 'output')}
+        clean_config = {k: v for k, v in config.items() if k not in ('source_root', 'data_root', 'client_index', 'validation_index', 'output')}
         output.append(dict(summary=summary, config=clean_config, accuracy_matrix=matrix,
                            RMA_task_ratios=ratios, DRR_source_task_ratios=replay,
                            swanlab=read(root / 'swanlab_run.json'), rounds=rounds, stages=stages,
